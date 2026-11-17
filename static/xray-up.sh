@@ -4,7 +4,7 @@
 # xray-up: one-shot Xray deployment for a clean Debian 12/13 VPS.
 #
 #   - Xray-core (pinned release, checksum-verified) as a systemd service
-#   - one VLESS + REALITY + XTLS-Vision inbound, one user
+#   - one VLESS + REALITY inbound (XHTTP by default, raw TCP + Vision optional), one user
 #   - a sudo user with a random password, root SSH login disabled, SSH on a new port
 #   - nftables firewall (only SSH and the Xray port are reachable)
 #   - automatic security updates (unattended-upgrades)
@@ -20,6 +20,22 @@ set -Eeuo pipefail
 # Defaults
 # ----------------------------------------------------------------------------
 XRAY_VERSION_DEFAULT="v26.11.9"   # tested with this script; override with --xray-version
+
+# Transport for new deployments. Deliberately not a command-line option.
+#   xhttp  VLESS + XHTTP + REALITY, random path, no flow (Vision does not work over XHTTP)
+#   raw    VLESS + raw TCP + REALITY + xtls-rprx-vision
+# Existing servers keep the transport they were deployed with (it is in the state file).
+TRANSPORT=xhttp
+
+# Extra geodata files, installed next to the geoip.dat/geosite.dat that ship with Xray.
+# Reference them in the config as "ext:<file>:<list>", e.g. "ext:geosite_ru.dat:category-ads-all".
+# Using the name geoip.dat or geosite.dat replaces the bundled file instead.
+# Format: "<installed file name>|<https URL>". "<URL>.sha256sum" must exist and is verified.
+# Downloaded on the first run and again on every --upgrade.
+GEO_EXTRA=(
+	"geosite_RU.dat|https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geosite.dat"
+	"geoip_RU.dat|https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geoip.dat"
+)
 
 XRAY_BIN=/usr/local/bin/xray
 XRAY_ETC=/usr/local/etc/xray
@@ -58,6 +74,8 @@ OPT_SNI_CHECK=1
 OPT_QR=0
 
 # Runtime values
+NET=""             # transport of this server: xhttp | raw
+XHTTP_PATH=""
 PRIVATE_KEY=""
 PUBLIC_KEY=""
 SHORT_ID=""
@@ -88,7 +106,7 @@ on_error() {
 
 usage() {
 	cat <<EOF
-xray-up: one-shot Xray (VLESS + REALITY + Vision) deployment for clean Debian 12/13.
+xray-up: one-shot Xray (VLESS + REALITY, $TRANSPORT) deployment for clean Debian 12/13.
 
 First run, as root:
   bash xray-up.sh --sni DOMAIN [options]
@@ -112,9 +130,11 @@ Options for the first run:
 
 After the first run (sudo xray-up ...):
   --show                Print the connection link and server details again
-  --rotate              New UUID, REALITY keys and short ID (old link stops working).
+  --rotate              New UUID, REALITY keys, short ID and XHTTP path
+                        (old link stops working; the transport stays the same).
                         Accepts --sni, --name, --uuid, --host.
-  --upgrade             Replace the Xray binary. Accepts --xray-version.
+  --upgrade             Replace the Xray binary and re-download the geodata.
+                        Accepts --xray-version.
   -h, --help            This text
 EOF
 }
@@ -283,6 +303,8 @@ preflight() {
 		*) warn "tested on Debian 12 and 13; this is Debian ${os_ver:-unknown}, continuing anyway" ;;
 	esac
 	[[ -d /run/systemd/system ]] || die "systemd is not running; cannot continue"
+	[[ $TRANSPORT == xhttp || $TRANSPORT == raw ]] \
+		|| die "TRANSPORT at the top of the script must be xhttp or raw (got: $TRANSPORT)"
 }
 
 xray_asset_name() {
@@ -371,15 +393,48 @@ check_sni() {
 # ----------------------------------------------------------------------------
 # Xray
 # ----------------------------------------------------------------------------
+resolve_latest() {
+	# Turn "latest" into a concrete tag, so the archive and its checksum file are
+	# guaranteed to come from the same release. GitHub answers
+	# .../releases/latest/download/<asset> with a redirect to .../releases/download/<tag>/<asset>.
+	local asset=$1 loc tag
+	loc=$(curl -fsS --retry 3 --retry-delay 2 --connect-timeout 15 -o /dev/null -w '%{redirect_url}' \
+		"https://github.com/XTLS/Xray-core/releases/latest/download/$asset.dgst") \
+		|| die "could not reach GitHub to look up the latest Xray release"
+	tag=$(sed -n 's#.*/releases/download/\(v[0-9][0-9.]*\)/.*#\1#p' <<<"$loc")
+	[[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+		|| die "could not work out the latest Xray release (redirect: ${loc:-none}); pass --xray-version"
+	XRAY_VERSION=$tag
+}
+
+fetch_geodata() {
+	# Downloads and verifies every GEO_EXTRA entry into $WORK_DIR/xray/.
+	local entry file url expected actual
+	for entry in "${GEO_EXTRA[@]}"; do
+		file=${entry%%|*}
+		url=${entry#*|}
+		[[ $entry == *'|'* && $file =~ ^[A-Za-z0-9._-]+\.dat$ && $url =~ ^https://[^[:space:]]+$ ]] \
+			|| die "invalid GEO_EXTRA entry: $entry"
+		log "Downloading geodata $file"
+		curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 15 -o "$WORK_DIR/xray/$file" "$url" \
+			|| die "download failed: $url"
+		curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 15 -o "$WORK_DIR/$file.sha256sum" "$url.sha256sum" \
+			|| die "download failed: $url.sha256sum"
+		expected=$(awk 'NR==1 { print $1 }' "$WORK_DIR/$file.sha256sum")
+		actual=$(sha256sum "$WORK_DIR/xray/$file" | awk '{ print $1 }')
+		[[ $expected =~ ^[0-9a-f]{64}$ ]] || die "could not read the SHA-256 for $file"
+		[[ $expected == "$actual" ]] || die "checksum mismatch for $file (expected $expected, got $actual)"
+	done
+}
+
 fetch_xray() {
-	# Downloads and verifies the release into $WORK_DIR/xray/.
+	# Downloads and verifies the release (plus extra geodata) into $WORK_DIR/xray/.
 	local asset base expected actual
 	asset=$(xray_asset_name)
 	if [[ $XRAY_VERSION == latest ]]; then
-		base="https://github.com/XTLS/Xray-core/releases/latest/download"
-	else
-		base="https://github.com/XTLS/Xray-core/releases/download/$XRAY_VERSION"
+		resolve_latest "$asset"
 	fi
+	base="https://github.com/XTLS/Xray-core/releases/download/$XRAY_VERSION"
 
 	log "Downloading Xray ($XRAY_VERSION, $asset)"
 	curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 15 -o "$WORK_DIR/xray.zip" "$base/$asset" \
@@ -397,13 +452,14 @@ fetch_xray() {
 		|| die "could not unpack the Xray archive"
 	chmod 0755 "$WORK_DIR/xray/xray"
 	"$WORK_DIR/xray/xray" version >/dev/null || die "the downloaded Xray binary does not run on this machine"
+	fetch_geodata
 }
 
 place_xray() {
 	install -d -m 0755 "$XRAY_SHARE"
 	install -m 0755 "$WORK_DIR/xray/xray" "$XRAY_BIN.new"
 	mv -f "$XRAY_BIN.new" "$XRAY_BIN"
-	install -m 0644 "$WORK_DIR/xray/geoip.dat" "$WORK_DIR/xray/geosite.dat" "$XRAY_SHARE/"
+	install -m 0644 "$WORK_DIR"/xray/*.dat "$XRAY_SHARE/"
 }
 
 xray_version_string() {
@@ -436,6 +492,13 @@ gen_xray_identity() {
 	SHORT_ID=$(openssl rand -hex 8)
 	[[ $SHORT_ID =~ ^[0-9a-f]{16}$ ]] || die "could not generate a short ID"
 
+	if [[ $NET == xhttp ]]; then
+		XHTTP_PATH="/$(openssl rand -hex 8)"
+		[[ $XHTTP_PATH =~ ^/[0-9a-f]{16}$ ]] || die "could not generate an XHTTP path"
+	else
+		XHTTP_PATH=""
+	fi
+
 	if [[ -z $UUID ]]; then
 		UUID=$("$XRAY_BIN" uuid)
 	fi
@@ -445,7 +508,24 @@ gen_xray_identity() {
 
 write_xray_config() {
 	# Every interpolated value has been validated to a JSON-safe character set.
-	local tmp=$WORK_DIR/config.json
+	local tmp=$WORK_DIR/config.json flow_json transport_json
+	case $NET in
+		xhttp)
+			# No "flow": XTLS Vision does not work over XHTTP.
+			flow_json=""
+			transport_json='"network": "xhttp",
+        "xhttpSettings": {
+          "path": "'"$XHTTP_PATH"'",
+          "mode": "auto"
+        },'
+			;;
+		raw)
+			flow_json='
+            "flow": "xtls-rprx-vision",'
+			transport_json='"network": "raw",'
+			;;
+		*) die "unknown transport: $NET" ;;
+	esac
 	cat >"$tmp" <<EOF
 {
   "log": {
@@ -459,15 +539,14 @@ write_xray_config() {
       "settings": {
         "clients": [
           {
-            "id": "$UUID",
-            "flow": "xtls-rprx-vision",
+            "id": "$UUID",$flow_json
             "email": "$NAME"
           }
         ],
         "decryption": "none"
       },
       "streamSettings": {
-        "network": "raw",
+        $transport_json
         "security": "reality",
         "realitySettings": {
           "show": false,
@@ -492,8 +571,20 @@ write_xray_config() {
   "routing": {
     "domainStrategy": "AsIs",
     "rules": [
-      { "type": "field", "protocol": ["bittorrent"], "outboundTag": "block" },
-      { "type": "field", "ip": ["geoip:private"], "outboundTag": "block" }
+        {
+            "domain": [
+                "geosite:category-ads-all",
+                "ext:geosite_RU.dat:category-ads-all",
+                "ext:geosite_RU.dat:ru-available-only-inside",
+                "domain:ru",
+                "domain:su",
+                "domain:xn--p1ai"
+            ],
+            "outboundTag": "block",
+            "type": "field"
+        },
+        { "type": "field", "protocol": ["bittorrent"], "outboundTag": "block" },
+        { "type": "field", "ip": ["geoip:private", "ext:geoip_RU.dat:ru"], "outboundTag": "block" }
     ]
   }
 }
@@ -557,7 +648,7 @@ install_xray() {
 			--shell /usr/sbin/nologin "$XRAY_USER"
 	fi
 	place_xray
-	log "Installed Xray $(xray_version_string)"
+	log "Installed Xray $(xray_version_string) ($NET transport)"
 
 	gen_xray_identity
 	write_xray_config
@@ -812,6 +903,8 @@ write_state() {
 		printf '# xray-up state. Root only. Do not edit by hand.\n'
 		printf 'S_HOST=%q\n' "$HOST"
 		printf 'S_PORT=%q\n' "$PORT"
+		printf 'S_NET=%q\n' "$NET"
+		printf 'S_XHTTP_PATH=%q\n' "$XHTTP_PATH"
 		printf 'S_UUID=%q\n' "$UUID"
 		printf 'S_SNI=%q\n' "$SNI"
 		printf 'S_PUBLIC_KEY=%q\n' "$PUBLIC_KEY"
@@ -827,7 +920,7 @@ write_state() {
 }
 
 load_state() {
-	local S_HOST="" S_PORT="" S_UUID="" S_SNI="" S_PUBLIC_KEY="" S_SHORT_ID="" S_NAME=""
+	local S_HOST="" S_PORT="" S_NET="" S_XHTTP_PATH="" S_UUID="" S_SNI="" S_PUBLIC_KEY="" S_SHORT_ID="" S_NAME=""
 	local S_ADMIN_USER="" S_SSH_PORT="" S_SSH_AUTH="" S_FIREWALL_STATE=""
 	[[ -f $STATE_FILE ]] || die "no xray-up installation found on this server ($STATE_FILE is missing)"
 	# shellcheck disable=SC1090
@@ -835,6 +928,8 @@ load_state() {
 	# Command-line values (already validated) win over stored ones where a mode allows them.
 	HOST=${HOST:-$S_HOST}
 	PORT=$S_PORT
+	NET=${S_NET:-raw}   # state files written before XHTTP support were all raw
+	XHTTP_PATH=$S_XHTTP_PATH
 	UUID=${UUID:-$S_UUID}
 	SNI=${SNI:-$S_SNI}
 	PUBLIC_KEY=$S_PUBLIC_KEY
@@ -862,8 +957,14 @@ vless_link() {
 	if [[ $h == *:* ]]; then
 		h="[$h]"
 	fi
-	printf 'vless://%s@%s:%s?encryption=none&flow=xtls-rprx-vision&security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&type=tcp&headerType=none#%s' \
-		"$UUID" "$h" "$PORT" "$SNI" "$PUBLIC_KEY" "$SHORT_ID" "$NAME"
+	if [[ $NET == xhttp ]]; then
+		# The path is "/" plus hex, so encoding the slash is all the URL-encoding it needs.
+		printf 'vless://%s@%s:%s?encryption=none&security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&type=xhttp&path=%s&mode=auto#%s' \
+			"$UUID" "$h" "$PORT" "$SNI" "$PUBLIC_KEY" "$SHORT_ID" "${XHTTP_PATH//\//%2F}" "$NAME"
+	else
+		printf 'vless://%s@%s:%s?encryption=none&flow=xtls-rprx-vision&security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&type=tcp&headerType=none#%s' \
+			"$UUID" "$h" "$PORT" "$SNI" "$PUBLIC_KEY" "$SHORT_ID" "$NAME"
+	fi
 }
 
 print_qr() {
@@ -882,6 +983,16 @@ print_qr() {
 }
 
 print_connection() {
+	local transport_lines
+	if [[ $NET == xhttp ]]; then
+		transport_lines="  Flow          (empty)
+  Transport     xhttp
+  Path          $XHTTP_PATH
+  Mode          auto"
+	else
+		transport_lines="  Flow          xtls-rprx-vision
+  Transport     tcp (raw)"
+	fi
 	cat <<EOF
 
 VLESS link (import into the client app):
@@ -892,8 +1003,7 @@ Manual client settings:
   Address       $HOST
   Port          $PORT
   UUID          $UUID
-  Flow          xtls-rprx-vision
-  Transport     tcp (raw)
+$transport_lines
   Security      reality
   SNI           $SNI
   Fingerprint   chrome
@@ -961,6 +1071,7 @@ mode_install() {
 		exit 0
 	fi
 	validate_install_args
+	NET=$TRANSPORT
 
 	: >>"$LOG_FILE"
 	chmod 0600 "$LOG_FILE"

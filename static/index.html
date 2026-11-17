@@ -157,7 +157,7 @@
 <main>
   <header>
     <h1><span>$</span> xray-up</h1>
-    <p>Builds the one command that turns a clean Debian 12/13 VPS into a hardened Xray server (VLESS + REALITY + Vision). Nothing you type here leaves this page; the root password is asked for by <code>ssh</code> in your terminal.</p>
+    <p>Builds the one command that turns a clean Debian 12/13 VPS into a hardened Xray server (VLESS + XHTTP + REALITY). Nothing you type here leaves this page; the root password is asked for by <code>ssh</code> in your terminal.</p>
   </header>
 
   <h2>1. Server</h2>
@@ -172,11 +172,6 @@
         <label for="sni">REALITY target (SNI)</label>
         <input type="text" id="sni" placeholder="www.example.com" autocomplete="off" autocapitalize="off" spellcheck="false">
         <p class="err" id="sni-err"></p>
-      </div>
-      <div class="wide">
-        <label for="url">Script URL <small>where the server downloads xray-up.sh from</small></label>
-        <input type="text" id="url" placeholder="https://USER.github.io/REPO/xray-up.sh" autocomplete="off" autocapitalize="off" spellcheck="false">
-        <p class="err" id="url-err"></p>
       </div>
     </div>
 
@@ -234,30 +229,35 @@
     </details>
   </div>
 
-  <h2>2. Run one of these</h2>
+  <h2>2. Run it</h2>
   <div class="panel">
     <div class="cmd">
       <div class="cmd-head">
-        <div><strong>Server downloads the script</strong> <span>macOS, Linux, Windows cmd and PowerShell</span></div>
+        <div><strong>Paste into a terminal</strong> <span>macOS, Linux, Windows cmd and PowerShell</span></div>
         <button class="copy" data-for="cmd-remote" disabled>Copy</button>
       </div>
       <pre id="cmd-remote" class="waiting"></pre>
     </div>
-    <div class="cmd">
-      <div class="cmd-head">
-        <div><strong>Send your local copy</strong> <span>macOS, Linux, Windows cmd</span></div>
-        <button class="copy" data-for="cmd-pipe" disabled>Copy</button>
+    <p class="hint">ssh asks for the root password, then the server downloads <a href="xray-up.sh" download>xray-up.sh</a> and runs it. It takes a minute or two.</p>
+
+    <details>
+      <summary>Server has no curl or wget?</summary>
+      <p class="hint">These send a local copy of the script instead, so the server needs nothing installed. Download <a href="xray-up.sh" download>xray-up.sh</a> and run the command from the same folder.</p>
+      <div class="cmd">
+        <div class="cmd-head">
+          <div><strong>Local copy</strong> <span>macOS, Linux, Windows cmd</span></div>
+          <button class="copy" data-for="cmd-pipe" disabled>Copy</button>
+        </div>
+        <pre id="cmd-pipe" class="waiting"></pre>
       </div>
-      <pre id="cmd-pipe" class="waiting"></pre>
-    </div>
-    <div class="cmd">
-      <div class="cmd-head">
-        <div><strong>Send your local copy</strong> <span>PowerShell</span></div>
-        <button class="copy" data-for="cmd-ps" disabled>Copy</button>
+      <div class="cmd">
+        <div class="cmd-head">
+          <div><strong>Local copy</strong> <span>PowerShell</span></div>
+          <button class="copy" data-for="cmd-ps" disabled>Copy</button>
+        </div>
+        <pre id="cmd-ps" class="waiting"></pre>
       </div>
-      <pre id="cmd-ps" class="waiting"></pre>
-    </div>
-    <p class="hint">The local-copy commands need nothing installed on the server. Run them from the folder that holds <a id="dl" href="xray-up.sh" download>xray-up.sh</a>.</p>
+    </details>
   </div>
 
   <h2>3. Save the output</h2>
@@ -270,12 +270,17 @@
   <div class="panel info">
     <ol>
       <li>Checks from the server that the SNI site speaks TLS 1.3 and negotiates ALPN.</li>
-      <li>Installs a pinned, checksum-verified Xray release as a systemd service with one VLESS + REALITY + Vision inbound.</li>
+      <li>Installs a pinned, checksum-verified Xray release as a systemd service with one VLESS + XHTTP + REALITY inbound on a random path.</li>
       <li>Turns on automatic security updates, with a reboot at 04:30 server time when a new kernel needs it.</li>
       <li>Creates a sudo user with a 32-character random password.</li>
       <li>Moves SSH to a new port, disables root login, allows only the admin user.</li>
       <li>Loads an nftables firewall: inbound SSH, the Xray port and ICMP only.</li>
     </ol>
+  </div>
+
+  <h2>Client apps</h2>
+  <div class="panel info">
+    <p>XHTTP needs a client built on a recent Xray core, for example a current v2rayN, v2rayNG, Hiddify, Happ, Streisand or v2RayTun. Import the <code>vless://</code> link; if the app shows the transport as "tcp", it is too old.</p>
   </div>
 
   <h2>Choosing the SNI</h2>
@@ -293,8 +298,8 @@
     <p>Log in with the new port and user, then use the copy of the script that was installed on the server:</p>
     <ul>
       <li><code id="after-show">ssh -t -p PORT USER@SERVER sudo xray-up --show</code> prints the link again.</li>
-      <li><code>sudo xray-up --rotate</code> issues a new UUID, keys and short ID. The old link stops working.</li>
-      <li><code>sudo xray-up --upgrade --xray-version latest</code> replaces the Xray binary.</li>
+      <li><code>sudo xray-up --rotate</code> issues a new UUID, keys, short ID and path. The old link stops working.</li>
+      <li><code>sudo xray-up --upgrade --xray-version latest</code> replaces the Xray binary and refreshes the geodata.</li>
     </ul>
     <p>Running the deploy command a second time changes nothing. Root can no longer log in over SSH, so it fails at the password prompt.</p>
   </div>
@@ -310,7 +315,7 @@ var RX = {
   ipv4: /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/,
   ipv6: /^[0-9A-Fa-f:]{2,39}$/,
   domain: /^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$/,
-  url: /^https?:\/\/[A-Za-z0-9.-]+(:\d{1,5})?(\/[A-Za-z0-9._~\/+,=@-]*)?$/,
+  url: /^https:\/\/[A-Za-z0-9.-]+(:\d{1,5})?(\/[A-Za-z0-9._~\/+,=@-]*)?$/,
   user: /^[a-z][a-z0-9_-]{0,30}$/,
   name: /^[A-Za-z0-9._-]{1,32}$/,
   uuid: /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/,
@@ -322,8 +327,22 @@ function isPort(v) {
   return /^\d{1,5}$/.test(v) && Number(v) >= 1 && Number(v) <= 65535;
 }
 
+// Where the server downloads the script from. A page served over https uses its own
+// folder (so a fork works unchanged); a page opened as a local file uses the public copy.
+var DEFAULT_SCRIPT_URL = "https://blackholecompiler.github.io/xray-quick-deploy/xray-up.sh";
+
+function scriptUrlFor(loc) {
+  try {
+    if (loc && loc.protocol === "https:") {
+      var u = new URL("xray-up.sh", loc.href).href;
+      if (RX.url.test(u)) return u;
+    }
+  } catch (err) { /* fall through */ }
+  return DEFAULT_SCRIPT_URL;
+}
+
 // Returns { errors: {field: message}, commands: {remote, pipe, ps} | null, after: string }
-function build(f) {
+function build(f, scriptUrl) {
   var e = {};
   var v = {};
   Object.keys(f).forEach(function (k) {
@@ -336,8 +355,6 @@ function build(f) {
 
   if (!v.sni) e.sni = "Required.";
   else if (v.sni.length > 253 || !RX.domain.test(v.sni)) e.sni = "Enter a plain domain such as www.example.com.";
-
-  if (v.url && !RX.url.test(v.url)) e.url = "Enter a plain http(s) URL without query string or special characters.";
 
   if (v.sshport0 && !isPort(v.sshport0)) e.sshport0 = "1-65535.";
   if (v.port && !isPort(v.port)) e.port = "1-65535.";
@@ -386,9 +403,7 @@ function build(f) {
     errors: e,
     after: after,
     commands: {
-      remote: v.url
-        ? ssh + ' "(curl -fsSLo xray-up.sh ' + v.url + " || wget -qO xray-up.sh " + v.url + ") && " + run + '"'
-        : null,
+      remote: ssh + ' "(curl -fsSLo xray-up.sh ' + scriptUrl + " || wget -qO xray-up.sh " + scriptUrl + ") && " + run + '"',
       pipe: ssh + ' "cat > xray-up.sh && ' + run + '" < xray-up.sh',
       ps: "Get-Content -Raw xray-up.sh | " + ssh + " \"tr -d '\\r' > xray-up.sh && " + run + '"'
     }
@@ -398,15 +413,12 @@ function build(f) {
 // ---- Page wiring -------------------------------------------------------------
 if (typeof document !== "undefined") {
   (function () {
-    var textIds = ["host", "sni", "url", "sshport0", "port", "user", "sshport", "name", "version", "uuid", "pubkey"];
+    var textIds = ["host", "sni", "sshport0", "port", "user", "sshport", "name", "version", "uuid", "pubkey"];
     var checkIds = ["qr", "nofw", "noreboot", "nosni"];
     var touched = {};
     var $ = function (id) { return document.getElementById(id); };
 
-    // When served over http(s), the script normally sits next to this page.
-    if (/^https?:$/.test(location.protocol)) {
-      try { $("url").value = new URL("xray-up.sh", location.href).href; } catch (err) { /* leave empty */ }
-    }
+    var scriptUrl = scriptUrlFor(location);
 
     function read() {
       var f = {};
@@ -424,7 +436,7 @@ if (typeof document !== "undefined") {
     }
 
     function render() {
-      var r = build(read());
+      var r = build(read(), scriptUrl);
       textIds.forEach(function (id) {
         var msg = r.errors[id];
         // Do not nag about empty required fields before the user has touched them.
@@ -438,7 +450,7 @@ if (typeof document !== "undefined") {
         wait = "Fix the highlighted fields above.";
       }
       var c = r.commands;
-      setCmd("cmd-remote", c && c.remote, c ? "Enter the script URL above to use this variant." : wait);
+      setCmd("cmd-remote", c && c.remote, wait);
       setCmd("cmd-pipe", c && c.pipe, wait);
       setCmd("cmd-ps", c && c.ps, wait);
       $("after-show").textContent = r.after;
@@ -486,7 +498,7 @@ if (typeof document !== "undefined") {
   })();
 }
 
-if (typeof module !== "undefined") { module.exports = { build: build }; }
+if (typeof module !== "undefined") { module.exports = { build: build, scriptUrlFor: scriptUrlFor }; }
 </script>
 </body>
 </html>
