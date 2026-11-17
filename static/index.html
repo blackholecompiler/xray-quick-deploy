@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>xray-up: command builder</title>
+<style>
+  :root {
+    --bg: #f4f2ec;
+    --panel: #fffdf8;
+    --ink: #1d1f1c;
+    --muted: #666a60;
+    --line: #d9d5c8;
+    --accent: #1f6f4a;
+    --accent-ink: #ffffff;
+    --code-bg: #171a17;
+    --code-ink: #dfe7dc;
+    --code-dim: #8a9587;
+    --bad: #a8321f;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121412;
+      --panel: #1a1d1a;
+      --ink: #e4e8e1;
+      --muted: #969c92;
+      --line: #2e332d;
+      --accent: #58b889;
+      --accent-ink: #0d1510;
+      --code-bg: #0b0d0b;
+      --code-ink: #dfe7dc;
+      --code-dim: #7c877a;
+      --bad: #ef8a76;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.55 var(--sans);
+  }
+  main {
+    max-width: 780px;
+    margin: 0 auto;
+    padding: 40px 20px 80px;
+  }
+  header { margin-bottom: 28px; }
+  h1 {
+    font: 600 30px/1.1 var(--mono);
+    letter-spacing: -0.02em;
+    margin: 0 0 10px;
+  }
+  h1 span { color: var(--accent); }
+  header p { margin: 0; color: var(--muted); max-width: 60ch; }
+  h2 {
+    font: 600 13px/1.2 var(--mono);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin: 36px 0 12px;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px 20px;
+  }
+  .wide { grid-column: 1 / -1; }
+  @media (max-width: 600px) { .grid { grid-template-columns: 1fr; } }
+  label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 5px; }
+  label small { font-weight: 400; color: var(--muted); }
+  input[type="text"] {
+    width: 100%;
+    padding: 9px 11px;
+    font: 14px/1.3 var(--mono);
+    color: var(--ink);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+  }
+  input[type="text"]::placeholder { color: var(--muted); opacity: 0.7; }
+  input[type="text"]:focus-visible, button:focus-visible, summary:focus-visible, a:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  input.invalid { border-color: var(--bad); }
+  .hint { font-size: 13px; color: var(--muted); margin: 5px 0 0; }
+  .err { font-size: 13px; color: var(--bad); margin: 5px 0 0; min-height: 0; }
+  details { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 14px; }
+  summary { cursor: pointer; font-size: 14px; font-weight: 600; width: fit-content; }
+  details .grid { margin-top: 16px; }
+  .checks { display: grid; gap: 8px; }
+  .checks label { font-weight: 400; display: flex; gap: 9px; align-items: baseline; margin: 0; }
+  .checks input { accent-color: var(--accent); }
+
+  .cmd { margin-top: 14px; }
+  .cmd:first-child { margin-top: 0; }
+  .cmd-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 6px;
+  }
+  .cmd-head strong { font-size: 14px; }
+  .cmd-head span { font-size: 13px; color: var(--muted); }
+  pre {
+    margin: 0;
+    padding: 14px 16px;
+    background: var(--code-bg);
+    color: var(--code-ink);
+    border-radius: 8px;
+    font: 13px/1.55 var(--mono);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  pre.waiting { color: var(--code-dim); }
+  button.copy {
+    font: 600 12px/1 var(--mono);
+    padding: 7px 11px;
+    color: var(--accent-ink);
+    background: var(--accent);
+    border: 0;
+    border-radius: 5px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  button.copy:disabled { opacity: 0.4; cursor: default; }
+  .info p, .info li { font-size: 15px; }
+  .info ul, .info ol { margin: 0; padding-left: 20px; }
+  .info li { margin: 5px 0; }
+  .info p { margin: 0 0 10px; }
+  .info p:last-child { margin-bottom: 0; }
+  code {
+    font: 0.88em var(--mono);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 5px;
+    overflow-wrap: anywhere;
+  }
+  a { color: var(--accent); }
+  footer { margin-top: 36px; font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1><span>$</span> xray-up</h1>
+    <p>Builds the one command that turns a clean Debian 12/13 VPS into a hardened Xray server (VLESS + REALITY + Vision). Nothing you type here leaves this page; the root password is asked for by <code>ssh</code> in your terminal.</p>
+  </header>
+
+  <h2>1. Server</h2>
+  <div class="panel">
+    <div class="grid">
+      <div>
+        <label for="host">Server address</label>
+        <input type="text" id="host" placeholder="203.0.113.7" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <p class="err" id="host-err"></p>
+      </div>
+      <div>
+        <label for="sni">REALITY target (SNI)</label>
+        <input type="text" id="sni" placeholder="www.example.com" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <p class="err" id="sni-err"></p>
+      </div>
+      <div class="wide">
+        <label for="url">Script URL <small>where the server downloads xray-up.sh from</small></label>
+        <input type="text" id="url" placeholder="https://USER.github.io/REPO/xray-up.sh" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <p class="err" id="url-err"></p>
+      </div>
+    </div>
+
+    <details>
+      <summary>Options</summary>
+      <div class="grid">
+        <div>
+          <label for="sshport0">Current SSH port <small>default 22</small></label>
+          <input type="text" id="sshport0" placeholder="22" inputmode="numeric" autocomplete="off">
+          <p class="err" id="sshport0-err"></p>
+        </div>
+        <div>
+          <label for="port">Xray port <small>default 443</small></label>
+          <input type="text" id="port" placeholder="443" inputmode="numeric" autocomplete="off">
+          <p class="err" id="port-err"></p>
+        </div>
+        <div>
+          <label for="user">Admin user <small>default vpsadmin</small></label>
+          <input type="text" id="user" placeholder="vpsadmin" autocomplete="off" autocapitalize="off" spellcheck="false">
+          <p class="err" id="user-err"></p>
+        </div>
+        <div>
+          <label for="sshport">New SSH port <small>default random</small></label>
+          <input type="text" id="sshport" placeholder="random 10000-32767" inputmode="numeric" autocomplete="off">
+          <p class="err" id="sshport-err"></p>
+        </div>
+        <div>
+          <label for="name">Link label <small>default xray-up</small></label>
+          <input type="text" id="name" placeholder="xray-up" autocomplete="off" autocapitalize="off" spellcheck="false">
+          <p class="err" id="name-err"></p>
+        </div>
+        <div>
+          <label for="version">Xray version <small>default pinned</small></label>
+          <input type="text" id="version" placeholder="v26.11.9 or latest" autocomplete="off" autocapitalize="off" spellcheck="false">
+          <p class="err" id="version-err"></p>
+        </div>
+        <div class="wide">
+          <label for="uuid">Client UUID <small>default generated</small></label>
+          <input type="text" id="uuid" placeholder="generated on the server" autocomplete="off" autocapitalize="off" spellcheck="false">
+          <p class="err" id="uuid-err"></p>
+        </div>
+        <div class="wide">
+          <label for="pubkey">SSH public key <small>optional; disables SSH password logins</small></label>
+          <input type="text" id="pubkey" placeholder="ssh-ed25519 AAAA..." autocomplete="off" autocapitalize="off" spellcheck="false">
+          <p class="err" id="pubkey-err"></p>
+          <p class="hint">The key's trailing comment is dropped.</p>
+        </div>
+        <div class="wide checks">
+          <label><input type="checkbox" id="qr"> Print the link as a QR code too</label>
+          <label><input type="checkbox" id="nofw"> Skip the nftables firewall</label>
+          <label><input type="checkbox" id="noreboot"> No automatic reboot after kernel updates</label>
+          <label><input type="checkbox" id="nosni"> Skip the SNI check</label>
+        </div>
+      </div>
+    </details>
+  </div>
+
+  <h2>2. Run one of these</h2>
+  <div class="panel">
+    <div class="cmd">
+      <div class="cmd-head">
+        <div><strong>Server downloads the script</strong> <span>macOS, Linux, Windows cmd and PowerShell</span></div>
+        <button class="copy" data-for="cmd-remote" disabled>Copy</button>
+      </div>
+      <pre id="cmd-remote" class="waiting"></pre>
+    </div>
+    <div class="cmd">
+      <div class="cmd-head">
+        <div><strong>Send your local copy</strong> <span>macOS, Linux, Windows cmd</span></div>
+        <button class="copy" data-for="cmd-pipe" disabled>Copy</button>
+      </div>
+      <pre id="cmd-pipe" class="waiting"></pre>
+    </div>
+    <div class="cmd">
+      <div class="cmd-head">
+        <div><strong>Send your local copy</strong> <span>PowerShell</span></div>
+        <button class="copy" data-for="cmd-ps" disabled>Copy</button>
+      </div>
+      <pre id="cmd-ps" class="waiting"></pre>
+    </div>
+    <p class="hint">The local-copy commands need nothing installed on the server. Run them from the folder that holds <a id="dl" href="xray-up.sh" download>xray-up.sh</a>.</p>
+  </div>
+
+  <h2>3. Save the output</h2>
+  <div class="panel info">
+    <p>The run ends with one summary block. It holds the <code>vless://</code> link, the new SSH port, the admin user and its password. <strong>The password is printed once and stored nowhere</strong>, so copy the block into your password manager before closing the terminal.</p>
+    <p>Lost it? Log in as root on the provider's web console and run <code>passwd vpsadmin</code>.</p>
+  </div>
+
+  <h2>What the script does</h2>
+  <div class="panel info">
+    <ol>
+      <li>Checks from the server that the SNI site speaks TLS 1.3 and negotiates ALPN.</li>
+      <li>Installs a pinned, checksum-verified Xray release as a systemd service with one VLESS + REALITY + Vision inbound.</li>
+      <li>Turns on automatic security updates, with a reboot at 04:30 server time when a new kernel needs it.</li>
+      <li>Creates a sudo user with a 32-character random password.</li>
+      <li>Moves SSH to a new port, disables root login, allows only the admin user.</li>
+      <li>Loads an nftables firewall: inbound SSH, the Xray port and ICMP only.</li>
+    </ol>
+  </div>
+
+  <h2>Choosing the SNI</h2>
+  <div class="panel info">
+    <ul>
+      <li>A real third-party HTTPS site that you do not control and that is reachable without the proxy.</li>
+      <li>It must support TLS 1.3. HTTP/2 is preferred; a site with no ALPN at all does not work.</li>
+      <li>Use the exact hostname that serves the site, not one that only redirects elsewhere.</li>
+      <li>A site hosted near the server's own network is a more believable choice than a random famous one.</li>
+    </ul>
+  </div>
+
+  <h2>Afterwards</h2>
+  <div class="panel info">
+    <p>Log in with the new port and user, then use the copy of the script that was installed on the server:</p>
+    <ul>
+      <li><code id="after-show">ssh -t -p PORT USER@SERVER sudo xray-up --show</code> prints the link again.</li>
+      <li><code>sudo xray-up --rotate</code> issues a new UUID, keys and short ID. The old link stops working.</li>
+      <li><code>sudo xray-up --upgrade --xray-version latest</code> replaces the Xray binary.</li>
+    </ul>
+    <p>Running the deploy command a second time changes nothing. Root can no longer log in over SSH, so it fails at the password prompt.</p>
+  </div>
+
+  <footer>Debian 12 and 13 only, amd64 or arm64. The page is a single static file with no external requests.</footer>
+</main>
+
+<script>
+"use strict";
+
+// ---- Pure logic (also runs under Node for testing) --------------------------
+var RX = {
+  ipv4: /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/,
+  ipv6: /^[0-9A-Fa-f:]{2,39}$/,
+  domain: /^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$/,
+  url: /^https?:\/\/[A-Za-z0-9.-]+(:\d{1,5})?(\/[A-Za-z0-9._~\/+,=@-]*)?$/,
+  user: /^[a-z][a-z0-9_-]{0,30}$/,
+  name: /^[A-Za-z0-9._-]{1,32}$/,
+  uuid: /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/,
+  version: /^(latest|v\d+\.\d+\.\d+)$/,
+  pubkey: /^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com) ([A-Za-z0-9+\/]+={0,3})( .*)?$/
+};
+
+function isPort(v) {
+  return /^\d{1,5}$/.test(v) && Number(v) >= 1 && Number(v) <= 65535;
+}
+
+// Returns { errors: {field: message}, commands: {remote, pipe, ps} | null, after: string }
+function build(f) {
+  var e = {};
+  var v = {};
+  Object.keys(f).forEach(function (k) {
+    v[k] = typeof f[k] === "string" ? f[k].trim() : f[k];
+  });
+
+  if (!v.host) e.host = "Required.";
+  else if (!(RX.ipv4.test(v.host) || RX.domain.test(v.host) || (v.host.indexOf(":") >= 0 && RX.ipv6.test(v.host))))
+    e.host = "Enter an IPv4/IPv6 address or a hostname.";
+
+  if (!v.sni) e.sni = "Required.";
+  else if (v.sni.length > 253 || !RX.domain.test(v.sni)) e.sni = "Enter a plain domain such as www.example.com.";
+
+  if (v.url && !RX.url.test(v.url)) e.url = "Enter a plain http(s) URL without query string or special characters.";
+
+  if (v.sshport0 && !isPort(v.sshport0)) e.sshport0 = "1-65535.";
+  if (v.port && !isPort(v.port)) e.port = "1-65535.";
+  if (v.sshport && !isPort(v.sshport)) e.sshport = "1-65535.";
+  if (!e.port && !e.sshport && v.sshport && Number(v.sshport) === Number(v.port || 443))
+    e.sshport = "Must differ from the Xray port.";
+
+  if (v.user && !RX.user.test(v.user)) e.user = "Lowercase letter first, then a-z, 0-9, _ or -.";
+  else if (v.user === "root" || v.user === "xray") e.user = "This name is reserved.";
+
+  if (v.name && !RX.name.test(v.name)) e.name = "Letters, digits, dot, underscore, dash; max 32.";
+  if (v.uuid && !RX.uuid.test(v.uuid)) e.uuid = "Not a UUID.";
+  if (v.version && !RX.version.test(v.version)) e.version = "Use a tag like v26.11.9, or latest.";
+
+  var key = "";
+  if (v.pubkey) {
+    var m = RX.pubkey.exec(v.pubkey);
+    if (!m) e.pubkey = "Paste one OpenSSH public key line (ssh-ed25519 AAAA...).";
+    else key = m[1] + " " + m[3];   // type + base64 only: safe inside single quotes in every shell
+  }
+
+  var afterUser = (!e.user && v.user) || "vpsadmin";
+  var afterPort = (!e.sshport && v.sshport) || "PORT";
+  var afterHost = (!e.host && v.host) || "SERVER";
+  var after = "ssh -t -p " + afterPort + " " + afterUser + "@" + afterHost + " sudo xray-up --show";
+
+  if (Object.keys(e).length) return { errors: e, commands: null, after: after };
+
+  var args = ["--sni " + v.sni.toLowerCase()];
+  if (v.port && Number(v.port) !== 443) args.push("--port " + Number(v.port));
+  if (v.user && v.user !== "vpsadmin") args.push("--user " + v.user);
+  if (v.sshport) args.push("--ssh-port " + Number(v.sshport));
+  if (v.name && v.name !== "xray-up") args.push("--name " + v.name);
+  if (v.uuid) args.push("--uuid " + v.uuid.toLowerCase());
+  if (v.version) args.push("--xray-version " + v.version);
+  if (key) args.push("--pubkey '" + key + "'");
+  if (v.qr) args.push("--qr");
+  if (v.nofw) args.push("--no-firewall");
+  if (v.noreboot) args.push("--no-auto-reboot");
+  if (v.nosni) args.push("--skip-sni-check");
+
+  var ssh = "ssh " + (v.sshport0 && Number(v.sshport0) !== 22 ? "-p " + Number(v.sshport0) + " " : "") + "root@" + v.host;
+  var run = "bash xray-up.sh " + args.join(" ");
+
+  return {
+    errors: e,
+    after: after,
+    commands: {
+      remote: v.url
+        ? ssh + ' "(curl -fsSLo xray-up.sh ' + v.url + " || wget -qO xray-up.sh " + v.url + ") && " + run + '"'
+        : null,
+      pipe: ssh + ' "cat > xray-up.sh && ' + run + '" < xray-up.sh',
+      ps: "Get-Content -Raw xray-up.sh | " + ssh + " \"tr -d '\\r' > xray-up.sh && " + run + '"'
+    }
+  };
+}
+
+// ---- Page wiring -------------------------------------------------------------
+if (typeof document !== "undefined") {
+  (function () {
+    var textIds = ["host", "sni", "url", "sshport0", "port", "user", "sshport", "name", "version", "uuid", "pubkey"];
+    var checkIds = ["qr", "nofw", "noreboot", "nosni"];
+    var touched = {};
+    var $ = function (id) { return document.getElementById(id); };
+
+    // When served over http(s), the script normally sits next to this page.
+    if (/^https?:$/.test(location.protocol)) {
+      try { $("url").value = new URL("xray-up.sh", location.href).href; } catch (err) { /* leave empty */ }
+    }
+
+    function read() {
+      var f = {};
+      textIds.forEach(function (id) { f[id] = $(id).value; });
+      checkIds.forEach(function (id) { f[id] = $(id).checked; });
+      return f;
+    }
+
+    function setCmd(id, text, placeholder) {
+      var pre = $(id);
+      var btn = document.querySelector('button[data-for="' + id + '"]');
+      pre.textContent = text || placeholder;
+      pre.classList.toggle("waiting", !text);
+      btn.disabled = !text;
+    }
+
+    function render() {
+      var r = build(read());
+      textIds.forEach(function (id) {
+        var msg = r.errors[id];
+        // Do not nag about empty required fields before the user has touched them.
+        var show = msg && (touched[id] || $(id).value.trim() !== "");
+        $(id + "-err").textContent = show ? msg : "";
+        $(id).classList.toggle("invalid", !!show);
+        $(id).setAttribute("aria-invalid", show ? "true" : "false");
+      });
+      var wait = "Fill in the server address and the SNI above.";
+      if (Object.keys(r.errors).some(function (k) { return k !== "host" && k !== "sni"; })) {
+        wait = "Fix the highlighted fields above.";
+      }
+      var c = r.commands;
+      setCmd("cmd-remote", c && c.remote, c ? "Enter the script URL above to use this variant." : wait);
+      setCmd("cmd-pipe", c && c.pipe, wait);
+      setCmd("cmd-ps", c && c.ps, wait);
+      $("after-show").textContent = r.after;
+    }
+
+    function copyText(text) {
+      if (navigator.clipboard && window.isSecureContext) {
+        return navigator.clipboard.writeText(text);
+      }
+      // Fallback for file:// and plain http.
+      return new Promise(function (resolve, reject) {
+        var ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        var ok = false;
+        try { ok = document.execCommand("copy"); } catch (err) { ok = false; }
+        document.body.removeChild(ta);
+        if (ok) { resolve(); } else { reject(new Error("copy failed")); }
+      });
+    }
+
+    textIds.forEach(function (id) {
+      $(id).addEventListener("input", render);
+      $(id).addEventListener("blur", function () { touched[id] = true; render(); });
+    });
+    checkIds.forEach(function (id) { $(id).addEventListener("change", render); });
+
+    Array.prototype.forEach.call(document.querySelectorAll("button.copy"), function (btn) {
+      btn.addEventListener("click", function () {
+        var text = $(btn.getAttribute("data-for")).textContent;
+        copyText(text).then(
+          function () { btn.textContent = "Copied"; },
+          function () { btn.textContent = "Select and copy manually"; }
+        ).then(function () {
+          setTimeout(function () { btn.textContent = "Copy"; }, 1600);
+        });
+      });
+    });
+
+    render();
+  })();
+}
+
+if (typeof module !== "undefined") { module.exports = { build: build }; }
+</script>
+</body>
+</html>
